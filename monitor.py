@@ -23,6 +23,21 @@ from utils import log, K2C, action_to_values, action_to_string
 # JSON 存放子目录：episode_*.json 存到 save_dir/EPISODES_JSON_SUBDIR/ 下
 EPISODES_JSON_SUBDIR = "episodes"
 
+# 单日 episode 曲线横轴：用 0–24 小时（每步 15min），不用步数 1–96
+STEP_SEC_FOR_PLOT = getattr(config, "STEP_SECONDS", 900)
+
+
+def _time_hours_for_episode_curve(n_steps):
+    """单日 episode 的横轴：0, 0.25, ..., 23.75 (h)，与步数一一对应。"""
+    return np.arange(n_steps) * (STEP_SEC_FOR_PLOT / 3600.0)
+
+
+def _set_time_of_day_axis(ax):
+    """统一单日曲线的横轴为 0–24h。"""
+    ax.set_xlabel("Time of day (h)")
+    ax.set_xlim(0, 24)
+    ax.set_xticks([0, 6, 12, 18, 24])
+
 
 def step_print(step1_index, info, action, reward, extra_line=None):
     """每 N 步打印一次（与 A2C 一致）。step1_index 为 1-based 步数。"""
@@ -395,7 +410,8 @@ class Monitor:
         ep_title = f"Episode {episode_label}" if episode_label is not None else "Latest Episode"
 
         if self.last_actions:
-            steps = range(1, len(self.last_actions) + 1)
+            n_steps = len(self.last_actions)
+            time_h = _time_hours_for_episode_curve(n_steps)
             decoded = [action_to_values(a, config.__dict__) for a in self.last_actions]
             fan_seq = [d["fan"] for d in decoded]
             supply_seq = [K2C(d["supply_temp"]) for d in decoded]
@@ -403,45 +419,45 @@ class Monitor:
             cool_seq = [K2C(d["cool_setpoint"]) for d in decoded]
 
             ax = axes_bot[0][0]
-            ax.plot(steps, self.last_temps, label="Room Temp", linewidth=2, color="blue")
-            ax.plot(steps, self.last_outdoor, label="Outdoor Temp", alpha=0.6, color="gray", linestyle="--")
+            ax.plot(time_h, self.last_temps, label="Room Temp", linewidth=2, color="blue")
+            ax.plot(time_h, self.last_outdoor, label="Outdoor Temp", alpha=0.6, color="gray", linestyle="--")
             ax.axhspan(config.COMFORT_LOW, config.COMFORT_HIGH, alpha=0.15, color="green", label="Comfort Zone 20-24°C")
             ax.axhline(22, color="r", linestyle="--", linewidth=1.5, label="Target 22°C")
             ax.set_title(f"{ep_title} | Temperature Profile")
-            ax.set_xlabel("Step (15min)")
             ax.set_ylabel("Temperature (°C)")
+            _set_time_of_day_axis(ax)
             ax.legend(loc="best", fontsize=7)
             ax.grid(True, alpha=0.3)
 
             ax = axes_bot[0][1]
-            ax.plot(steps, self.last_rewards, "tab:orange", linewidth=1.5)
-            ax.set_title("Step Rewards")
-            ax.set_xlabel("Step")
+            ax.plot(time_h, self.last_rewards, "tab:orange", linewidth=1.5)
+            ax.set_title("Rewards over Day")
             ax.set_ylabel("Reward")
             ax.axhline(0, color="gray", linestyle="--", alpha=0.5)
+            _set_time_of_day_axis(ax)
             ax.grid(True, alpha=0.3)
 
             ax = axes_bot[0][2]
             if self.last_comfort_details:
-                ax.plot(steps, self.last_comfort_details, "green", linewidth=1.5, label="Comfort Reward")
+                ax.plot(time_h, self.last_comfort_details, "green", linewidth=1.5, label="Comfort Reward")
                 ax.axhline(0, color="gray", linestyle="--", alpha=0.5)
                 comfort_zones = [1 if config.COMFORT_LOW <= t <= config.COMFORT_HIGH else 0 for t in self.last_temps]
                 ax2 = ax.twinx()
-                ax2.fill_between(steps, 0, comfort_zones, alpha=0.2, color="green", label="In Comfort Zone")
+                ax2.fill_between(time_h, 0, comfort_zones, alpha=0.2, color="green", label="In Comfort Zone")
                 ax2.set_ylabel("Comfort Zone (0/1)", color="green")
                 ax2.set_ylim(-0.1, 1.1)
             ax.set_title("Comfort Reward Details")
-            ax.set_xlabel("Step")
             ax.set_ylabel("Comfort Reward")
+            _set_time_of_day_axis(ax)
             ax.legend(loc="upper left", fontsize=7)
             ax.grid(True, alpha=0.3)
 
             ax = axes_bot[1][0]
-            ax.scatter(steps, self.last_actions, s=15, alpha=0.6, color="steelblue")
-            ax.set_title("Action Index per Step")
-            ax.set_xlabel("Step")
+            ax.scatter(time_h, self.last_actions, s=15, alpha=0.6, color="steelblue")
+            ax.set_title("Action Index over Day")
             ax.set_ylabel("Action Index (0-23)")
             ax.set_ylim(-1, max(self.last_actions) + 2 if self.last_actions else 24)
+            _set_time_of_day_axis(ax)
             ax.grid(True, alpha=0.3)
 
             ax = axes_bot[1][1]
@@ -455,30 +471,30 @@ class Monitor:
             ax.grid(True, axis="y", alpha=0.3)
 
             ax = axes_bot[1][2]
-            ax.plot(steps, supply_seq, label="Supply Temp", linewidth=1.5, color="red")
-            ax.plot(steps, heat_seq, label="Heat Setpoint", linewidth=1.5, color="orange")
-            ax.plot(steps, cool_seq, label="Cool Setpoint", linewidth=1.5, color="blue")
+            ax.plot(time_h, supply_seq, label="Supply Temp", linewidth=1.5, color="red")
+            ax.plot(time_h, heat_seq, label="Heat Setpoint", linewidth=1.5, color="orange")
+            ax.plot(time_h, cool_seq, label="Cool Setpoint", linewidth=1.5, color="blue")
             ax.set_title("Supply Temperature & Setpoints")
-            ax.set_xlabel("Step")
             ax.set_ylabel("Temperature (°C)")
+            _set_time_of_day_axis(ax)
             ax.legend(fontsize=7)
             ax.grid(True, alpha=0.3)
 
             ax = axes_bot[2][0]
-            ax.plot(steps, fan_seq, label="Fan u", color="tab:purple", linewidth=1.5)
+            ax.plot(time_h, fan_seq, label="Fan u", color="tab:purple", linewidth=1.5)
             ax.set_title("Fan Control")
-            ax.set_xlabel("Step")
-            ax.set_ylabel("0-1")
+            ax.set_ylabel("Fan (0-1)")
             ax.set_ylim(0, 1.05)
+            _set_time_of_day_axis(ax)
             ax.legend(fontsize=7)
             ax.grid(True, alpha=0.3)
 
             ax = axes_bot[2][1]
             if self.last_energy_details:
-                ax.plot(steps, self.last_energy_details, "orange", linewidth=1.5, label="Energy Cost")
-            ax.set_title("Energy Consumption per Step")
-            ax.set_xlabel("Step")
-            ax.set_ylabel("Energy (kW)")
+                ax.plot(time_h, self.last_energy_details, "orange", linewidth=1.5, label="Energy Cost")
+            ax.set_title("Energy Consumption over Day")
+            ax.set_ylabel("Power (kW)")
+            _set_time_of_day_axis(ax)
             ax.legend(fontsize=7)
             ax.grid(True, alpha=0.3)
 
@@ -497,12 +513,12 @@ class Monitor:
             if self.last_comfort_details and self.last_energy_details:
                 cum_comfort = np.cumsum(self.last_comfort_details)
                 cum_energy = np.cumsum([-e for e in self.last_energy_details])
-                ax.plot(steps, cum_comfort, "g-", linewidth=2, label="Cumulative Comfort")
-                ax.plot(steps, cum_energy, "orange", linewidth=2, label="Cumulative Energy (neg)")
+                ax.plot(time_h, cum_comfort, "g-", linewidth=2, label="Cumulative Comfort")
+                ax.plot(time_h, cum_energy, "orange", linewidth=2, label="Cumulative Energy (neg)")
                 ax.axhline(0, color="gray", linestyle="--", alpha=0.5)
             ax.set_title("Cumulative Reward Components")
-            ax.set_xlabel("Step")
             ax.set_ylabel("Cumulative Reward")
+            _set_time_of_day_axis(ax)
             ax.legend(fontsize=7)
             ax.grid(True, alpha=0.3)
 
@@ -542,10 +558,11 @@ class Monitor:
         plt.close()
 
     def plot_episode_curves(self, episode_label, save_dir=None):
-        """单独 4×3 episode 曲线（与 DQN——BOPTEST 一致）：温度、奖励、舒适度、动作、直方图、设定值、风机、能耗、温度分布、累积奖励、统计信息。"""
+        """单独 4×3 episode 曲线（与 DQN——BOPTEST 一致）：温度、奖励、舒适度、动作、直方图、设定值、风机、能耗、温度分布、累积奖励、统计信息。横轴为 0–24h。"""
         if not self.last_actions:
             return
-        steps = range(1, len(self.last_actions) + 1)
+        n_steps = len(self.last_actions)
+        time_h = _time_hours_for_episode_curve(n_steps)
         decoded = [action_to_values(a, config.__dict__) for a in self.last_actions]
         fan_seq = [d["fan"] for d in decoded]
         supply_seq = [K2C(d["supply_temp"]) for d in decoded]
@@ -554,45 +571,45 @@ class Monitor:
         fig, axes = plt.subplots(4, 3, figsize=(20, 16))
 
         ax = axes[0, 0]
-        ax.plot(steps, self.last_temps, label="Room Temp", linewidth=2, color="blue")
-        ax.plot(steps, self.last_outdoor, label="Outdoor Temp", alpha=0.6, color="gray", linestyle="--")
+        ax.plot(time_h, self.last_temps, label="Room Temp", linewidth=2, color="blue")
+        ax.plot(time_h, self.last_outdoor, label="Outdoor Temp", alpha=0.6, color="gray", linestyle="--")
         ax.axhspan(config.COMFORT_LOW, config.COMFORT_HIGH, alpha=0.15, color="green", label="Comfort Zone 20-24°C")
         ax.axhline(22, color="r", linestyle="--", linewidth=1.5, label="Target 22°C")
         ax.set_title(f"Episode {episode_label} | Temperature Profile")
-        ax.set_xlabel("Step (15min)")
         ax.set_ylabel("Temperature (°C)")
+        _set_time_of_day_axis(ax)
         ax.legend(loc="best")
         ax.grid(True, alpha=0.3)
 
         ax = axes[0, 1]
-        ax.plot(steps, self.last_rewards, "tab:orange", linewidth=1.5)
-        ax.set_title("Step Rewards")
-        ax.set_xlabel("Step")
+        ax.plot(time_h, self.last_rewards, "tab:orange", linewidth=1.5)
+        ax.set_title("Rewards over Day")
         ax.set_ylabel("Reward")
         ax.axhline(0, color="gray", linestyle="--", alpha=0.5)
+        _set_time_of_day_axis(ax)
         ax.grid(True, alpha=0.3)
 
         ax = axes[0, 2]
         if self.last_comfort_details:
-            ax.plot(steps, self.last_comfort_details, "green", linewidth=1.5, label="Comfort Reward")
+            ax.plot(time_h, self.last_comfort_details, "green", linewidth=1.5, label="Comfort Reward")
             ax.axhline(0, color="gray", linestyle="--", alpha=0.5)
             comfort_zones = [1 if config.COMFORT_LOW <= t <= config.COMFORT_HIGH else 0 for t in self.last_temps]
             ax2 = ax.twinx()
-            ax2.fill_between(steps, 0, comfort_zones, alpha=0.2, color="green", label="In Comfort Zone")
+            ax2.fill_between(time_h, 0, comfort_zones, alpha=0.2, color="green", label="In Comfort Zone")
             ax2.set_ylabel("Comfort Zone (0/1)", color="green")
             ax2.set_ylim(-0.1, 1.1)
         ax.set_title("Comfort Reward Details")
-        ax.set_xlabel("Step")
         ax.set_ylabel("Comfort Reward")
+        _set_time_of_day_axis(ax)
         ax.legend(loc="upper left")
         ax.grid(True, alpha=0.3)
 
         ax = axes[1, 0]
-        ax.scatter(steps, self.last_actions, s=15, alpha=0.6, color="steelblue")
-        ax.set_title("Action Index per Step")
-        ax.set_xlabel("Step")
+        ax.scatter(time_h, self.last_actions, s=15, alpha=0.6, color="steelblue")
+        ax.set_title("Action Index over Day")
         ax.set_ylabel("Action Index (0-23)")
         ax.set_ylim(-1, max(self.last_actions) + 2 if self.last_actions else 24)
+        _set_time_of_day_axis(ax)
         ax.grid(True, alpha=0.3)
 
         ax = axes[1, 1]
@@ -606,30 +623,30 @@ class Monitor:
         ax.grid(True, axis="y", alpha=0.3)
 
         ax = axes[1, 2]
-        ax.plot(steps, supply_seq, label="Supply Temp", linewidth=1.5, color="red")
-        ax.plot(steps, heat_seq, label="Heat Setpoint", linewidth=1.5, color="orange")
-        ax.plot(steps, cool_seq, label="Cool Setpoint", linewidth=1.5, color="blue")
+        ax.plot(time_h, supply_seq, label="Supply Temp", linewidth=1.5, color="red")
+        ax.plot(time_h, heat_seq, label="Heat Setpoint", linewidth=1.5, color="orange")
+        ax.plot(time_h, cool_seq, label="Cool Setpoint", linewidth=1.5, color="blue")
         ax.set_title("Supply Temperature & Setpoints")
-        ax.set_xlabel("Step")
         ax.set_ylabel("Temperature (°C)")
+        _set_time_of_day_axis(ax)
         ax.legend()
         ax.grid(True, alpha=0.3)
 
         ax = axes[2, 0]
-        ax.plot(steps, fan_seq, label="Fan u", color="tab:purple", linewidth=1.5)
+        ax.plot(time_h, fan_seq, label="Fan u", color="tab:purple", linewidth=1.5)
         ax.set_title("Fan Control")
-        ax.set_xlabel("Step")
-        ax.set_ylabel("0-1")
+        ax.set_ylabel("Fan (0-1)")
         ax.set_ylim(0, 1.05)
+        _set_time_of_day_axis(ax)
         ax.legend()
         ax.grid(True, alpha=0.3)
 
         ax = axes[2, 1]
         if self.last_energy_details:
-            ax.plot(steps, self.last_energy_details, "orange", linewidth=1.5, label="Energy Cost")
-        ax.set_title("Energy Consumption per Step")
-        ax.set_xlabel("Step")
-        ax.set_ylabel("Energy (kW)")
+            ax.plot(time_h, self.last_energy_details, "orange", linewidth=1.5, label="Energy Cost")
+        ax.set_title("Energy Consumption over Day")
+        ax.set_ylabel("Power (kW)")
+        _set_time_of_day_axis(ax)
         ax.legend()
         ax.grid(True, alpha=0.3)
         if not self.last_energy_details:
@@ -650,12 +667,12 @@ class Monitor:
         if self.last_comfort_details and self.last_energy_details:
             cum_comfort = np.cumsum(self.last_comfort_details)
             cum_energy = np.cumsum([-e for e in self.last_energy_details])
-            ax.plot(steps, cum_comfort, "g-", linewidth=2, label="Cumulative Comfort")
-            ax.plot(steps, cum_energy, "orange", linewidth=2, label="Cumulative Energy (neg)")
+            ax.plot(time_h, cum_comfort, "g-", linewidth=2, label="Cumulative Comfort")
+            ax.plot(time_h, cum_energy, "orange", linewidth=2, label="Cumulative Energy (neg)")
             ax.axhline(0, color="gray", linestyle="--", alpha=0.5)
         ax.set_title("Cumulative Reward Components")
-        ax.set_xlabel("Step")
         ax.set_ylabel("Cumulative Reward")
+        _set_time_of_day_axis(ax)
         ax.legend()
         ax.grid(True, alpha=0.3)
 
