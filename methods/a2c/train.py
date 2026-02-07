@@ -149,6 +149,7 @@ def train():
         states, actions, rewards, dones, log_probs, values, entropies = [], [], [], [], [], [], []
         total_reward = 0.0
         temps, outdoor_seq, rewards_seq, comfort_details, energy_details = [], [], [], [], []
+        power_heating_kw, power_cooling_kw, power_fan_kw, co2_ppm_list = [], [], [], []
 
         # Warmup
         for _ in range(WARMUP_STEPS):
@@ -171,6 +172,10 @@ def train():
             rd = info.get("reward_detail", {})
             comfort_details.append(rd.get("comfort", 0))
             energy_details.append(rd.get("p_sum", 0))
+            power_heating_kw.append(rd.get("p_h", 0))
+            power_cooling_kw.append(rd.get("p_c", 0))
+            power_fan_kw.append(rd.get("p_f", 0))
+            co2_ppm_list.append(rd.get("co2_ppm", 600.0))
             state = next_state
             if done:
                 break
@@ -199,6 +204,10 @@ def train():
             rd = info.get("reward_detail", {})
             comfort_details.append(rd.get("comfort", 0))
             energy_details.append(rd.get("p_sum", 0))
+            power_heating_kw.append(rd.get("p_h", 0))
+            power_cooling_kw.append(rd.get("p_c", 0))
+            power_fan_kw.append(rd.get("p_f", 0))
+            co2_ppm_list.append(rd.get("co2_ppm", 600.0))
 
             if (step + 1 + WARMUP_STEPS) % config.STEP_PRINT_INTERVAL == 0:
                 top3 = torch.argsort(probs.squeeze(), descending=True)[:3]
@@ -241,7 +250,11 @@ def train():
         monitor.train_energy_consumption.append(total_energy)
         monitor.entropies.append(float(np.mean(entropies)) if entropies else 0)
         monitor.log_episode_curves(actions, temps, outdoor_seq, rewards_seq, comfort_details, energy_details)
-        monitor.save_episode_data(episode, actions, temps, outdoor_seq, rewards_seq, comfort_details, energy_details)
+        monitor.save_episode_data(
+            episode, actions, temps, outdoor_seq, rewards_seq, comfort_details, energy_details,
+            power_heating_kw=power_heating_kw, power_cooling_kw=power_cooling_kw, power_fan_kw=power_fan_kw,
+            start_time_seconds=getattr(env, "current_start_time", None), co2_ppm_list=co2_ppm_list,
+        )
 
         print(f"\n✅ Episode {episode} 完成", flush=True)
         print(f"   总奖励: {total_reward:.1f}", flush=True)

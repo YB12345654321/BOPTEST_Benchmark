@@ -200,6 +200,7 @@ def train():
 
         total_reward = 0.0
         temps, outdoor_seq, rewards_seq, comfort_details, energy_details, actions_list = [], [], [], [], [], []
+        power_heating_kw, power_cooling_kw, power_fan_kw, co2_ppm_list = [], [], [], []
 
         for _ in range(WARMUP_STEPS):
             next_state, reward, done, info = env.step(WARMUP_ACTION)
@@ -211,6 +212,10 @@ def train():
             rd = info.get("reward_detail", {})
             comfort_details.append(rd.get("comfort", 0))
             energy_details.append(rd.get("p_sum", 0))
+            power_heating_kw.append(rd.get("p_h", 0))
+            power_cooling_kw.append(rd.get("p_c", 0))
+            power_fan_kw.append(rd.get("p_f", 0))
+            co2_ppm_list.append(rd.get("co2_ppm", 600.0))
             actions_list.append(WARMUP_ACTION)
             state = next_state
             global_step += 1
@@ -236,6 +241,10 @@ def train():
             rd = info.get("reward_detail", {})
             comfort_details.append(rd.get("comfort", 0))
             energy_details.append(rd.get("p_sum", 0))
+            power_heating_kw.append(rd.get("p_h", 0))
+            power_cooling_kw.append(rd.get("p_c", 0))
+            power_fan_kw.append(rd.get("p_f", 0))
+            co2_ppm_list.append(rd.get("co2_ppm", 600.0))
             actions_list.append(action)
             global_step += 1
 
@@ -276,7 +285,11 @@ def train():
         monitor.train_comfort_ratios.append(comfort_ratio)
         monitor.train_energy_consumption.append(total_energy)
         monitor.log_episode_curves(actions_list, temps, outdoor_seq, rewards_seq, comfort_details, energy_details)
-        monitor.save_episode_data(episode, actions_list, temps, outdoor_seq, rewards_seq, comfort_details, energy_details)
+        monitor.save_episode_data(
+            episode, actions_list, temps, outdoor_seq, rewards_seq, comfort_details, energy_details,
+            power_heating_kw=power_heating_kw, power_cooling_kw=power_cooling_kw, power_fan_kw=power_fan_kw,
+            start_time_seconds=getattr(env, "current_start_time", None), co2_ppm_list=co2_ppm_list,
+        )
         print(f"\n✅ Episode {episode} 完成 | 总奖励: {total_reward:.1f} | 平均室温: {avg_temp:.1f}°C | 舒适区: {comfort_ratio*100:.1f}%", flush=True)
         print(f"   Epsilon: {linear_eps(global_step):.3f} | Buffer: {buffer.idx if not buffer.full else buffer.capacity}/{buffer.capacity} | 动作数: {len(Counter(actions_list))}", flush=True)
 

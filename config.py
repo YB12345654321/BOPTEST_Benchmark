@@ -40,3 +40,7 @@ NUM_ACTIONS = (
 # ---------- 奖励/舒适区（目标一致）----------
 COMFORT_LOW = 20.0
 COMFORT_HIGH = 24.0
+COMFORT_TARGET = 22.0  # 用于 RMSE/跟踪误差等论文指标
+
+# ---------- 步长（用于能耗换算 kWh = kW * step_sec/3600）----------
+STEP_SECONDS = 900  # 15 min

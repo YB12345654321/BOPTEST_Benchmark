@@ -25,6 +25,7 @@ class BOPTESTEnv:
         self.action_dim = config.NUM_ACTIONS
         self.prev_action_norm = 0.0
         self.episode_start_time = None
+        self.current_start_time = 0  # 当前 episode 起始 sim_time (秒)，供 monitor 保存
         self.steps_per_episode = config.STEPS_PER_EPISODE
         self.comfort_low = config.COMFORT_LOW
         self.comfort_high = config.COMFORT_HIGH
@@ -86,6 +87,7 @@ class BOPTESTEnv:
             payload = resp.json().get("payload", {})
             self.prev_action_norm = 0.0
             self.episode_start_time = payload.get("time", start_time)
+            self.current_start_time = int(start_time)
             log("✅ 环境重置成功")
             return self._get_obs(payload)
         except Exception as e:
@@ -158,10 +160,12 @@ class BOPTESTEnv:
             energy = -0.015 * (p_h + p_c) - 0.003 * p_f
         smooth = -0.005 * abs(obs[-1] - self.prev_action_norm)
         reward = float(np.clip(comfort + energy + smooth, -60.0, 12.0))
+        # 功率 kW（obs 里已是 kW），供 benchmark 与论文指标使用
         detail = {
             "comfort": comfort, "energy": energy, "smooth": smooth,
             "room_temp_c": room_temp_c, "in_comfort_zone": low <= room_temp_c <= high,
             "p_h": p_h, "p_c": p_c, "p_f": p_f, "p_sum": p_h + p_c + p_f,
+            "co2_ppm": float(obs[5] * 1000.0),  # IAQ，论文可选（obs[5] 为 co2/1000）
         }
         return reward, detail
 
