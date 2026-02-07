@@ -20,6 +20,9 @@ import matplotlib.pyplot as plt
 import config
 from utils import log, K2C, action_to_values, action_to_string
 
+# JSON 存放子目录：episode_*.json 存到 save_dir/EPISODES_JSON_SUBDIR/ 下
+EPISODES_JSON_SUBDIR = "episodes"
+
 
 def step_print(step1_index, info, action, reward, extra_line=None):
     """每 N 步打印一次（与 A2C 一致）。step1_index 为 1-based 步数。"""
@@ -45,6 +48,8 @@ class Monitor:
     def __init__(self, save_dir):
         self.save_dir = save_dir
         os.makedirs(save_dir, exist_ok=True)
+        self.episodes_dir = os.path.join(save_dir, EPISODES_JSON_SUBDIR)
+        os.makedirs(self.episodes_dir, exist_ok=True)
         self.train_rewards = []
         self.train_temps = []
         self.train_comfort_ratios = []
@@ -158,7 +163,7 @@ class Monitor:
         if start_time_seconds is not None:
             self.train_start_times.append(start_time_seconds)
 
-        path = os.path.join(self.save_dir, f"episode_{episode}.json")
+        path = os.path.join(self.episodes_dir, f"episode_{episode}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(episode_data, f, indent=2, ensure_ascii=False)
         return episode_data
