@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+.Python
+venv/
+.venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# 训练/运行生成的数据与图（可选：若希望保留 progress 等可删 data/）
+data/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# 模型与日志
+*.pth
+*.pt
+*.log
