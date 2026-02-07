@@ -111,6 +111,7 @@ def train():
 
     save_dir = os.path.join(config.DATA_ROOT, "a2c")
     plot_dir = os.path.join(save_dir, config.PLOT_SUBDIR)
+    progress_fname = "a2c_progress.png"
     os.makedirs(plot_dir, exist_ok=True)
 
     env = BOPTESTEnv()
@@ -283,11 +284,11 @@ def train():
             monitor.eval_episodes.append(episode)
             monitor.eval_rewards.append(avg_eval)
             print(f"  🔍 Eval avg reward: {avg_eval:.2f}", flush=True)
-            monitor.plot_combined(save_path=os.path.join(plot_dir, "progress.png"), episode_label=episode)
+            monitor.plot_combined(save_path=os.path.join(plot_dir, progress_fname), episode_label=episode)
 
     env.stop()
     monitor.save_training_summary()
-    monitor.plot_combined(save_path=os.path.join(plot_dir, "progress.png"), episode_label="final")
+    monitor.plot_combined(save_path=os.path.join(plot_dir, progress_fname), episode_label="final")
     log("A2C 训练结束")
 
 

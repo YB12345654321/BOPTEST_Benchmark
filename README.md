@@ -62,9 +62,9 @@ python methods/rule_ogb/train.py
   - `training_history.csv`：每 episode 的 Reward、AvgTemp、ComfortRatio、EnergyConsumption
   - `training_summary.json`：完整训练历史与最终统计
   - `training_output/`：**一张图合并、覆盖保存**（节省空间）
-    - **`progress.png`**：每次做 eval 或训练结束时**覆盖**保存。图内包含：
-      - **上方 1×5**：训练总览（Train Reward / Avg Temp / Comfort Ratio / Eval Reward / Entropy）
-      - **下方 3×2**：当前 episode 曲线（温度、Step Rewards、动作、直方图、设定值、风机）
+    - **`<model>_progress.png`**（如 `dqn_progress.png`、`ppo_progress.png`）：每次做 eval 或训练结束时**覆盖**保存。图内包含：
+      - **上方 2×3**：训练总览（Reward / Avg Temp / Comfort Ratio / Energy / Eval Reward / Temp Distribution）
+      - **下方 4×3**：当前 episode 曲线（横轴 0–24h；温度、奖励、舒适度、动作、设定值、风机、能耗等）
   - `episode_*.json`：单 episode 详细数据（可选用于细粒度对比）
 
 ## 多方法对比
