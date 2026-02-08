@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Q-Table 方法专用超参数（对齐 DQN：更快收敛、更早利用、适度学习率）。
-说明：训练回报 = 带探索的轨迹回报（含 epsilon + 未见过状态随机），
-      eval 回报 = 纯贪心策略在固定 4 日的回报；eval 更能反映真实策略水平。"""
+"""Q-Table 方法专用超参数（偏保守：降 alpha、慢退火，稳收敛）。
+说明：训练回报含探索，eval 回报为贪心策略，以 eval 为主看策略好坏。"""
 import numpy as np
 GAMMA = 0.99
-# 学习率：略降初值、提高底限、更慢衰减，便于 300 episode 内稳定收敛
-ALPHA = 0.18
-ALPHA_MIN = 0.03
-ALPHA_DECAY = 0.99997
-# 探索：更快退火、更低终点，使后期「训练回报」更接近 eval（便于看图）
+# 学习率：再降一点，减少 Q 表震荡，慢衰减
+ALPHA = 0.12
+ALPHA_MIN = 0.02
+ALPHA_DECAY = 0.99998
+# 探索：稍慢退火，避免过早贪心导致陷入次优
 EPS_START = 1.0
-EPS_END = 0.01       # 降到 0.01，后期几乎贪心，训练曲线会抬升
-EPS_DECAY_STEPS = 12_000  # ~125 episode 内退火到 0.01，后半程以利用为主
+EPS_END = 0.02
+EPS_DECAY_STEPS = 15_000  # ~156 episode 内退火到 0.02
 QT_STATE_MODE = "compact"
 TEMP_TARGET_C = 22.0
 if QT_STATE_MODE == "compact":
