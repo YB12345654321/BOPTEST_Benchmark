@@ -179,7 +179,7 @@ def train():
             avg_eval = float(np.mean(eval_r)) if eval_r else 0
             monitor.eval_episodes.append(episode)
             monitor.eval_rewards.append(avg_eval)
-            print(f"  🔍 Eval avg reward: {avg_eval:.2f}", flush=True)
+            print(f"  🔍 Eval avg reward: {avg_eval:.2f}（贪心+固定4日）| 训练回报含探索+随机起始日", flush=True)
             monitor.plot_combined(save_path=os.path.join(plot_dir, progress_fname), episode_label=episode)
 
     env.stop()

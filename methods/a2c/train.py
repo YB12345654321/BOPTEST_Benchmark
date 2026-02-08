@@ -229,6 +229,7 @@ def train():
         log_probs_old = torch.FloatTensor(log_probs)
         returns_t = torch.FloatTensor(returns)
         adv_t = torch.FloatTensor((adv - adv.mean()) / (adv.std() + 1e-8))
+        adv_t = torch.clamp(adv_t, -10.0, 10.0)  # 避免极值导致更新震荡
         logits, v = model(states_t)
         dist = torch.distributions.Categorical(torch.softmax(logits, dim=-1))
         log_probs_new = dist.log_prob(actions_t)

@@ -10,7 +10,8 @@ BOPTEST_URL = os.getenv("BOPTEST_URL", "http://127.0.0.1:80")
 TESTCASE_NAME = "bestest_air"
 
 # ---------- 训练通用 ----------
-TOTAL_EPISODES = 300
+# PPO 每 episode 多轮更新（约 8 次/ep），A2C 每 episode 仅 1 次更新；300 对 PPO 常够，A2C 易欠收敛。500 更稳妥。
+TOTAL_EPISODES = 500
 STEPS_PER_EPISODE = 96   # 1 day, 15min/step
 EVAL_FREQUENCY = 5
 STEP_PRINT_INTERVAL = 10  # 每 N 步打印一次当前状态
