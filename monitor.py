@@ -3,7 +3,8 @@
 统一监控与出图（与 DQN——BOPTEST 出图维度一致）
 - 每 N 步打印：Step | 室温 | 室外 | R | 动作 | action_str，细分 comfort/energy/smooth
 - plot: 训练总览 2×3（Reward / Avg Temp / Comfort Ratio / Energy / Eval Reward / Temp Distribution）
-- plot_combined: 一张图合并「训练总览 2×3」+「当前 episode 曲线 4×3」
+- plot_combined: 一张图合并「训练总览 2×3」+「当前 episode 曲线 4×3」+「某一天 24h 温度与功率」统一视图
+- 某日 24h 视图：左轴功率（加热/制冷填充），右轴温度（室内、室外、设定值、舒适区），与「对某一天 24h 监控」一致
 - plot_episode_curves: 单张 4×3 episode 曲线（温度、奖励、舒适度、动作、设定值、风机、能耗、分布、累积、统计）
 - 数据保存到 save_dir，便于各方法独立保存与后续对比
 """
@@ -37,6 +38,59 @@ def _set_time_of_day_axis(ax):
     ax.set_xlabel("Time of day (h)")
     ax.set_xlim(0, 24)
     ax.set_xticks([0, 6, 12, 18, 24])
+
+
+def _draw_daily_24h_profile(ax, time_h, last_temps, last_outdoor, last_power_heating_kw, last_power_cooling_kw,
+                            heat_seq, cool_seq, heating_kwh, cooling_kwh, episode_label, start_time_seconds=None):
+    """
+    在某一天 24h 上绘制：左轴功率（加热红/制冷蓝填充），右轴温度（室内、室外、加热/制冷设定值、舒适区）。
+    与「对某一天 24h 温度监控 + 影响因素」的展示方式一致。
+    start_time_seconds: 可选，仿真起始秒数，用于标题显示 Sim Day N。
+    """
+    step_sec = getattr(config, "STEP_SECONDS", 900)
+    kwh_factor = step_sec / 3600.0
+    n = len(time_h)
+    if n == 0:
+        return
+    # 功率 kW -> 用于填充；与参考图一致用 W 显示时可 *1000
+    heat_kw = np.array(last_power_heating_kw[:n]) if last_power_heating_kw else np.zeros(n)
+    cool_kw = np.array(last_power_cooling_kw[:n]) if last_power_cooling_kw else np.zeros(n)
+    ax.fill_between(time_h, 0, heat_kw * 1000, color="red", alpha=0.4, label="Heating Power (W)")
+    ax.fill_between(time_h, 0, -cool_kw * 1000, color="blue", alpha=0.4, label="Cooling Power (W)")
+    ax.axhline(0, color="gray", linewidth=0.8, linestyle="-")
+    ax.set_ylabel("Power (W)", color="black")
+    ax.tick_params(axis="y", labelcolor="black")
+    ax.set_ylim(_daily_24h_power_ylim(heat_kw, cool_kw))
+    ax2 = ax.twinx()
+    ax2.plot(time_h, last_temps[:n], color="green", linewidth=2.5, label="Indoor Temp")
+    ax2.plot(time_h, last_outdoor[:n], color="red", linewidth=1.5, alpha=0.8, label="Outdoor Temp")
+    if heat_seq is not None and len(heat_seq) >= n:
+        ax2.plot(time_h, heat_seq[:n], color="red", linestyle="--", linewidth=1.2, label="Heating Setpoint")
+    if cool_seq is not None and len(cool_seq) >= n:
+        ax2.plot(time_h, cool_seq[:n], color="blue", linestyle="--", linewidth=1.2, label="Cooling Setpoint")
+    ax2.axhspan(config.COMFORT_LOW, config.COMFORT_HIGH, alpha=0.15, color="green", label="Comfort Zone 20-24°C")
+    ax2.set_ylabel("Temperature (°C)", color="green")
+    ax2.tick_params(axis="y", labelcolor="green")
+    ax2.set_ylim(0, 40)
+    ax2.legend(loc="upper right", fontsize=7)
+    ax.legend(loc="upper left", fontsize=7)
+    _set_time_of_day_axis(ax)
+    title = f"Episode {episode_label} | 某日 24h 温度与功率"
+    if start_time_seconds is not None:
+        sim_day = int(start_time_seconds // 86400)
+        title += f"  | Sim Day {sim_day}"
+    if heating_kwh is not None and cooling_kwh is not None:
+        title += f"  | Heating: {heating_kwh:.2f} kWh, Cooling: {cooling_kwh:.2f} kWh"
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+
+
+def _daily_24h_power_ylim(heat_kw, cool_kw):
+    """功率轴范围：正为加热，负为制冷，对称一点。"""
+    max_h = float(np.max(heat_kw)) * 1000 if len(heat_kw) else 0
+    max_c = float(np.max(cool_kw)) * 1000 if len(cool_kw) else 0
+    m = max(max_h, max_c, 100)
+    return (-m * 1.05, m * 1.05)
 
 
 def step_print(step1_index, info, action, reward, extra_line=None):
@@ -80,6 +134,9 @@ class Monitor:
         self.train_action_switch_counts = []  # 动作切换次数
         self.train_peak_power_kw = []  # 步内最大功率 (kW)
         self.train_start_times = []  # episode 起始 sim_time (秒)，便于季节对比
+        self.train_comfort_violation_steps = []  # 每 episode 舒适区外步数
+        self.train_max_consecutive_violations = []  # 每 episode 最大连续违反步数
+        self.train_comfort_reward_sum = []  # 每 episode 舒适奖励分量之和（用于分解图）
         self.eval_rewards = []
         self.eval_episodes = []
         self.entropies = []  # 可选，A2C/PPO 用
@@ -90,6 +147,10 @@ class Monitor:
         self.last_comfort_details = []
         self.last_energy_details = []
         self.last_action_counts = Counter()
+        # 某一天 24h 功率分项（用于「温度+功率」统一日曲线）
+        self.last_power_heating_kw = []
+        self.last_power_cooling_kw = []
+        self.last_power_fan_kw = []
 
     def log_episode_curves(self, actions, temps, outdoors, rewards, comfort_details=None, energy_details=None):
         self.last_actions = list(actions)
@@ -122,6 +183,18 @@ class Monitor:
 
         comfort_ratio = float(np.mean([1 if config.COMFORT_LOW <= t <= config.COMFORT_HIGH else 0 for t in temps])) if temps else 0.0
         violation_ratio = 1.0 - comfort_ratio
+        in_comfort = [1 if config.COMFORT_LOW <= t <= config.COMFORT_HIGH else 0 for t in temps] if temps else []
+        violation_steps = int(sum(1 for x in in_comfort if x == 0)) if in_comfort else 0
+        max_consecutive_violation = 0
+        if in_comfort:
+            cur, best = 0, 0
+            for x in in_comfort:
+                if x == 0:
+                    cur += 1
+                    best = max(best, cur)
+                else:
+                    cur = 0
+            max_consecutive_violation = best
         target = getattr(config, "COMFORT_TARGET", 22.0)
         rmse_temp = float(np.sqrt(np.mean([(t - target) ** 2 for t in temps]))) if temps else 0.0
         max_dev = float(np.max([abs(t - target) for t in temps])) if temps else 0.0
@@ -156,6 +229,8 @@ class Monitor:
             "max_temp_deviation_c": max_dev,
             "action_switch_count": action_switches,
             "peak_power_kw": peak_kw,
+            "comfort_violation_steps": violation_steps,
+            "max_consecutive_violation": max_consecutive_violation,
             "start_time_seconds": start_time_seconds,
             "co2_ppm_mean": float(np.mean(co2_ppm_list)) if co2_ppm_list else None,
         }
@@ -163,6 +238,9 @@ class Monitor:
             episode_data["power_heating_kw"] = [to_float(x) for x in power_heating_kw]
             episode_data["power_cooling_kw"] = [to_float(x) for x in power_cooling_kw]
             episode_data["power_fan_kw"] = [to_float(x) for x in power_fan_kw]
+            self.last_power_heating_kw = list(power_heating_kw)
+            self.last_power_cooling_kw = list(power_cooling_kw)
+            self.last_power_fan_kw = list(power_fan_kw)
         if co2_ppm_list is not None:
             episode_data["co2_ppm"] = [to_float(x) for x in co2_ppm_list]
 
@@ -175,6 +253,9 @@ class Monitor:
         self.train_heating_kwh.append(heating_kwh)
         self.train_cooling_kwh.append(cooling_kwh)
         self.train_fan_kwh.append(fan_kwh)
+        self.train_comfort_violation_steps.append(violation_steps)
+        self.train_max_consecutive_violations.append(max_consecutive_violation)
+        self.train_comfort_reward_sum.append(float(sum(comfort_details or [])))
         if start_time_seconds is not None:
             self.train_start_times.append(start_time_seconds)
 
@@ -207,6 +288,9 @@ class Monitor:
                 "max_temp_deviations": [float(d) for d in self.train_max_temp_deviations],
                 "action_switch_counts": [int(a) for a in self.train_action_switch_counts],
                 "peak_power_kw": [float(p) for p in self.train_peak_power_kw],
+                "comfort_violation_steps": [int(v) for v in self.train_comfort_violation_steps],
+                "max_consecutive_violations": [int(m) for m in self.train_max_consecutive_violations],
+                "comfort_reward_sum": [float(c) for c in self.train_comfort_reward_sum],
                 "eval_episodes": [int(e) for e in self.eval_episodes],
                 "eval_rewards": [float(r) for r in self.eval_rewards],
             },
@@ -223,6 +307,9 @@ class Monitor:
                 "avg_max_temp_deviation_c": avg_last50(self.train_max_temp_deviations),
                 "avg_action_switch_count": avg_last50(self.train_action_switch_counts),
                 "avg_peak_power_kw": avg_last50(self.train_peak_power_kw),
+                "avg_comfort_violation_steps": avg_last50(self.train_comfort_violation_steps),
+                "avg_max_consecutive_violation": avg_last50(self.train_max_consecutive_violations),
+                "avg_comfort_reward_sum": avg_last50(self.train_comfort_reward_sum),
             },
         }
         path = os.path.join(self.save_dir, "training_summary.json")
@@ -235,6 +322,7 @@ class Monitor:
                 "Episode", "Reward", "AvgTemp", "ComfortRatio", "EnergyConsumption", "EnergyKWh",
                 "HeatingKWh", "CoolingKWh", "FanKWh",
                 "ComfortViolationRatio", "RMSE_TempC", "MaxTempDeviationC", "ActionSwitchCount", "PeakPowerKW",
+                "ComfortViolationSteps", "MaxConsecutiveViolation", "ComfortRewardSum",
             ])
             for i in range(n):
                 w.writerow([
@@ -252,6 +340,9 @@ class Monitor:
                     self.train_max_temp_deviations[i] if i < len(self.train_max_temp_deviations) else 0,
                     self.train_action_switch_counts[i] if i < len(self.train_action_switch_counts) else 0,
                     self.train_peak_power_kw[i] if i < len(self.train_peak_power_kw) else 0,
+                    self.train_comfort_violation_steps[i] if i < len(self.train_comfort_violation_steps) else 0,
+                    self.train_max_consecutive_violations[i] if i < len(self.train_max_consecutive_violations) else 0,
+                    self.train_comfort_reward_sum[i] if i < len(self.train_comfort_reward_sum) else 0,
                 ])
         log(f"💾 训练数据已保存到 {self.save_dir}")
 
@@ -340,12 +431,12 @@ class Monitor:
         """
         from matplotlib.gridspec import GridSpec
 
-        fig = plt.figure(figsize=(20, 20))
-        gs = GridSpec(2, 1, figure=fig, height_ratios=[1, 1.6], hspace=0.4)
+        fig = plt.figure(figsize=(20, 24))
+        gs = GridSpec(3, 1, figure=fig, height_ratios=[1.35, 1.6, 0.55], hspace=0.4)
 
-        # ---------- 上方 2×3 训练总览 ----------
-        gs_top = gs[0].subgridspec(2, 3, wspace=0.3, hspace=0.35)
-        axes_top = [[fig.add_subplot(gs_top[i, j]) for j in range(3)] for i in range(2)]
+        # ---------- 上方 3×3 训练总览（含动作切换、峰值功率、能耗分项）----------
+        gs_top = gs[0].subgridspec(3, 3, wspace=0.3, hspace=0.35)
+        axes_top = [[fig.add_subplot(gs_top[i, j]) for j in range(3)] for i in range(3)]
 
         ep_list = list(range(1, len(self.train_rewards) + 1))
         ax = axes_top[0][0]
@@ -403,6 +494,37 @@ class Monitor:
         ax.set_ylabel("Frequency")
         ax.legend(fontsize=7)
         ax.grid(True, alpha=0.3, axis="y")
+
+        # 第三行：动作切换、峰值功率、能耗分项 (Heating/Cooling/Fan kWh)
+        ax = axes_top[2][0]
+        if self.train_action_switch_counts:
+            ax.plot(ep_list, self.train_action_switch_counts, "teal", linewidth=1.5)
+        ax.set_title("Action Switch Count")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Switches")
+        ax.grid(True, alpha=0.3)
+
+        ax = axes_top[2][1]
+        if self.train_peak_power_kw:
+            ax.plot(ep_list, self.train_peak_power_kw, "darkorange", linewidth=1.5)
+        ax.set_title("Peak Power (kW)")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("kW")
+        ax.grid(True, alpha=0.3)
+
+        ax = axes_top[2][2]
+        if self.train_heating_kwh or self.train_cooling_kwh or self.train_fan_kwh:
+            if self.train_heating_kwh:
+                ax.plot(ep_list, self.train_heating_kwh, "r-", linewidth=1.2, label="Heating")
+            if self.train_cooling_kwh:
+                ax.plot(ep_list, self.train_cooling_kwh, "b-", linewidth=1.2, label="Cooling")
+            if self.train_fan_kwh:
+                ax.plot(ep_list, self.train_fan_kwh, "gray", linewidth=1.2, label="Fan")
+            ax.legend(fontsize=7)
+        ax.set_title("Energy Breakdown (kWh)")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("kWh")
+        ax.grid(True, alpha=0.3)
 
         # ---------- 下方 4×3 当前 episode 曲线 ----------
         gs_bot = gs[1].subgridspec(4, 3, wspace=0.28, hspace=0.4)
@@ -526,6 +648,15 @@ class Monitor:
             ax.axis("off")
             avg_temp = float(np.mean(self.last_temps)) if self.last_temps else 0
             comfort_ratio = float(np.mean([1 if config.COMFORT_LOW <= t <= config.COMFORT_HIGH else 0 for t in self.last_temps])) if self.last_temps else 0
+            in_comfort = [1 if config.COMFORT_LOW <= t <= config.COMFORT_HIGH else 0 for t in self.last_temps] if self.last_temps else []
+            violation_steps = sum(1 for x in in_comfort if x == 0)
+            max_consec = 0
+            if in_comfort:
+                cur, best = 0, 0
+                for x in in_comfort:
+                    cur = cur + 1 if x == 0 else 0
+                    best = max(best, cur)
+                max_consec = best
             total_energy = sum(self.last_energy_details) if self.last_energy_details else 0
             total_reward = sum(self.last_rewards) if self.last_rewards else 0
             avg_comfort = float(np.mean(self.last_comfort_details)) if self.last_comfort_details else 0
@@ -535,6 +666,7 @@ class Monitor:
                 + f"Total Reward: {total_reward:.2f}\n"
                 + f"Avg Temperature: {avg_temp:.2f}°C\n"
                 + f"Comfort Zone Ratio: {comfort_ratio*100:.1f}%\n"
+                + f"Violation steps: {violation_steps}, Max consecutive: {max_consec}\n"
                 + f"Total Energy: {total_energy:.2f} kW\n"
                 + f"Avg Comfort Reward: {avg_comfort:.2f}\n"
                 + f"Steps: {len(self.last_actions)}\n"
@@ -544,12 +676,32 @@ class Monitor:
                     bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.3))
 
             axes_bot[3][2].axis("off")
+
+            # ---------- 第三行：某一天 24h 温度与功率统一视图（与参考图一致）----------
+            ax_daily = fig.add_subplot(gs[2])
+            if (self.last_power_heating_kw or self.last_power_cooling_kw) and self.last_temps and self.last_outdoor:
+                step_sec = getattr(config, "STEP_SECONDS", 900)
+                kwh_factor = step_sec / 3600.0
+                h_kwh = float(sum(self.last_power_heating_kw) * kwh_factor) if self.last_power_heating_kw else 0
+                c_kwh = float(sum(self.last_power_cooling_kw) * kwh_factor) if self.last_power_cooling_kw else 0
+                start_sec = self.train_start_times[-1] if self.train_start_times else None
+                _draw_daily_24h_profile(
+                    ax_daily, time_h, self.last_temps, self.last_outdoor,
+                    self.last_power_heating_kw, self.last_power_cooling_kw,
+                    heat_seq, cool_seq, h_kwh, c_kwh, episode_label or "Latest", start_time_seconds=start_sec
+                )
+            else:
+                ax_daily.text(0.5, 0.5, "暂无该日功率分项数据（需 save_episode_data 传入 power_heating_kw/power_cooling_kw）",
+                             ha="center", va="center", transform=ax_daily.transAxes, fontsize=11)
+                ax_daily.set_xticks([])
+                ax_daily.set_yticks([])
         else:
             for i in range(4):
                 for j in range(3):
                     axes_bot[i][j].text(0.5, 0.5, "暂无 episode 曲线", ha="center", va="center", transform=axes_bot[i][j].transAxes)
                     axes_bot[i][j].set_xticks([])
                     axes_bot[i][j].set_yticks([])
+            fig.add_subplot(gs[2]).axis("off")
 
         if save_path:
             os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
@@ -651,6 +803,61 @@ class Monitor:
         plt.savefig(os.path.join(save_dir, f"{prefix}temp_distribution_last50.png"), dpi=150, bbox_inches="tight")
         plt.close()
 
+        # ---------- 7. Action Switch Count ----------
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        if self.train_action_switch_counts:
+            ax.plot(ep_list, self.train_action_switch_counts, "teal", linewidth=1.5)
+        ax.set_title("Action Switch Count")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Switches")
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{prefix}action_switch_count.png"), dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # ---------- 8. Peak Power (kW) ----------
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        if self.train_peak_power_kw:
+            ax.plot(ep_list, self.train_peak_power_kw, "darkorange", linewidth=1.5)
+        ax.set_title("Peak Power (kW)")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("kW")
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{prefix}peak_power.png"), dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # ---------- 9. Energy Breakdown (Heating/Cooling/Fan kWh) ----------
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        if self.train_heating_kwh or self.train_cooling_kwh or self.train_fan_kwh:
+            if self.train_heating_kwh:
+                ax.plot(ep_list, self.train_heating_kwh, "r-", linewidth=1.2, label="Heating")
+            if self.train_cooling_kwh:
+                ax.plot(ep_list, self.train_cooling_kwh, "b-", linewidth=1.2, label="Cooling")
+            if self.train_fan_kwh:
+                ax.plot(ep_list, self.train_fan_kwh, "gray", linewidth=1.2, label="Fan")
+            ax.legend(fontsize=8)
+        ax.set_title("Energy Breakdown (kWh)")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("kWh")
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{prefix}energy_breakdown_kwh.png"), dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # ---------- 10. Comfort Reward Sum (reward 分解) ----------
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        if self.train_comfort_reward_sum:
+            ax.plot(ep_list, self.train_comfort_reward_sum, "green", linewidth=1.5, label="Comfort component")
+        ax.set_title("Comfort Reward Sum per Episode")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Sum(comfort reward)")
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{prefix}comfort_reward_sum.png"), dpi=150, bbox_inches="tight")
+        plt.close()
+
         # ---------- Episode 曲线单独图（有 last_actions 时）---------
         if self.last_actions:
             n_steps = len(self.last_actions)
@@ -675,6 +882,23 @@ class Monitor:
             plt.tight_layout()
             plt.savefig(os.path.join(save_dir, f"{prefix}ep_temperature_profile.png"), dpi=150, bbox_inches="tight")
             plt.close()
+
+            # ep_daily_24h_profile：某一天 24h 温度与功率统一视图（与参考图一致）
+            if (self.last_power_heating_kw or self.last_power_cooling_kw) and self.last_temps and self.last_outdoor:
+                step_sec = getattr(config, "STEP_SECONDS", 900)
+                kwh_factor = step_sec / 3600.0
+                h_kwh = float(sum(self.last_power_heating_kw) * kwh_factor) if self.last_power_heating_kw else 0
+                c_kwh = float(sum(self.last_power_cooling_kw) * kwh_factor) if self.last_power_cooling_kw else 0
+                start_sec = self.train_start_times[-1] if self.train_start_times else None
+                fig, ax = plt.subplots(figsize=(10, 4))
+                _draw_daily_24h_profile(
+                    ax, time_h, self.last_temps, self.last_outdoor,
+                    self.last_power_heating_kw, self.last_power_cooling_kw,
+                    heat_seq, cool_seq, h_kwh, c_kwh, episode_label or "Latest", start_time_seconds=start_sec
+                )
+                plt.tight_layout()
+                plt.savefig(os.path.join(save_dir, f"{prefix}ep_daily_24h_profile.png"), dpi=150, bbox_inches="tight")
+                plt.close()
 
             # ep_rewards_over_day
             fig, ax = plt.subplots(figsize=(6, 3.5))
