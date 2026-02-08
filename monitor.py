@@ -557,6 +557,256 @@ class Monitor:
             log(f"📊 图表已保存（已覆盖）: {save_path}")
         plt.close()
 
+    def save_individual_plots(self, save_dir, method_name, episode_label=None):
+        """
+        在汇总看板之外，把看板里每个小图单独存为 method_图类型.png，便于后续按需提取。
+        - 训练总览 6 张：training_reward, avg_temp, comfort_ratio, energy_consumption, eval_reward, temp_distribution_last50
+        - 当前 episode 曲线多张：ep_temperature_profile, ep_rewards_over_day, ep_comfort_details, ...（无 episode 数据则只存训练 6 张）
+        """
+        os.makedirs(save_dir, exist_ok=True)
+        prefix = f"{method_name}_"
+        ep_list = list(range(1, len(self.train_rewards) + 1))
+
+        # ---------- 1. Training Reward ----------
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        ax.plot(ep_list, self.train_rewards, "b-", alpha=0.4, label="Raw")
+        if len(self.train_rewards) >= 10:
+            ma = np.convolve(self.train_rewards, np.ones(10) / 10, mode="valid")
+            ax.plot(range(10, len(self.train_rewards) + 1), ma, "r-", linewidth=2, label="MA(10)")
+        ax.set_title("Training Reward")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Reward")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{prefix}training_reward.png"), dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # ---------- 2. Average Temperature ----------
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        ax.plot(self.train_temps, "g-", linewidth=1.5)
+        ax.axhspan(config.COMFORT_LOW, config.COMFORT_HIGH, alpha=0.2, color="green", label="Comfort Zone")
+        ax.axhline(22, color="r", linestyle="--", linewidth=1.5, label="Target 22°C")
+        ax.set_title("Average Temperature")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Temperature (°C)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{prefix}avg_temp.png"), dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # ---------- 3. Comfort Zone Ratio ----------
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        if self.train_comfort_ratios:
+            ax.plot(self.train_comfort_ratios, "purple", linewidth=1.5)
+            ax.axhline(0.8, color="orange", linestyle="--", label="Target 80%")
+        ax.set_title("Comfort Zone Ratio")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Ratio (0-1)")
+        ax.set_ylim(0, 1.05)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{prefix}comfort_ratio.png"), dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # ---------- 4. Energy Consumption ----------
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        if self.train_energy_consumption:
+            ax.plot(self.train_energy_consumption, "orange", linewidth=1.5)
+        ax.set_title("Energy Consumption")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Total Energy (kW)")
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{prefix}energy_consumption.png"), dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # ---------- 5. Evaluation Reward ----------
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        if self.eval_rewards:
+            ax.plot(self.eval_episodes, self.eval_rewards, "ro-", markersize=6, linewidth=2)
+        ax.set_title("Evaluation Reward")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Eval Reward")
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{prefix}eval_reward.png"), dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # ---------- 6. Temperature Distribution (Last 50) ----------
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        if len(self.train_temps) >= 50:
+            recent = self.train_temps[-50:]
+            ax.hist(recent, bins=20, color="skyblue", edgecolor="black", alpha=0.7)
+            ax.axvline(22, color="r", linestyle="--", linewidth=2, label="Target 22°C")
+            ax.axvspan(config.COMFORT_LOW, config.COMFORT_HIGH, alpha=0.2, color="green", label="Comfort Zone")
+        ax.set_title("Temperature Distribution (Last 50 Episodes)")
+        ax.set_xlabel("Temperature (°C)")
+        ax.set_ylabel("Frequency")
+        ax.legend()
+        ax.grid(True, alpha=0.3, axis="y")
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, f"{prefix}temp_distribution_last50.png"), dpi=150, bbox_inches="tight")
+        plt.close()
+
+        # ---------- Episode 曲线单独图（有 last_actions 时）---------
+        if self.last_actions:
+            n_steps = len(self.last_actions)
+            time_h = _time_hours_for_episode_curve(n_steps)
+            decoded = [action_to_values(a, config.__dict__) for a in self.last_actions]
+            fan_seq = [d["fan"] for d in decoded]
+            supply_seq = [K2C(d["supply_temp"]) for d in decoded]
+            heat_seq = [K2C(d["heat_setpoint"]) for d in decoded]
+            cool_seq = [K2C(d["cool_setpoint"]) for d in decoded]
+
+            # ep_temperature_profile
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            ax.plot(time_h, self.last_temps, label="Room Temp", linewidth=2, color="blue")
+            ax.plot(time_h, self.last_outdoor, label="Outdoor Temp", alpha=0.6, color="gray", linestyle="--")
+            ax.axhspan(config.COMFORT_LOW, config.COMFORT_HIGH, alpha=0.15, color="green", label="Comfort Zone 20-24°C")
+            ax.axhline(22, color="r", linestyle="--", linewidth=1.5, label="Target 22°C")
+            ax.set_title("Temperature Profile")
+            ax.set_ylabel("Temperature (°C)")
+            _set_time_of_day_axis(ax)
+            ax.legend(loc="best", fontsize=8)
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"{prefix}ep_temperature_profile.png"), dpi=150, bbox_inches="tight")
+            plt.close()
+
+            # ep_rewards_over_day
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            ax.plot(time_h, self.last_rewards, "tab:orange", linewidth=1.5)
+            ax.set_title("Rewards over Day")
+            ax.set_ylabel("Reward")
+            ax.axhline(0, color="gray", linestyle="--", alpha=0.5)
+            _set_time_of_day_axis(ax)
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"{prefix}ep_rewards_over_day.png"), dpi=150, bbox_inches="tight")
+            plt.close()
+
+            # ep_comfort_details
+            if self.last_comfort_details:
+                fig, ax = plt.subplots(figsize=(6, 3.5))
+                ax.plot(time_h, self.last_comfort_details, "green", linewidth=1.5, label="Comfort Reward")
+                ax.axhline(0, color="gray", linestyle="--", alpha=0.5)
+                comfort_zones = [1 if config.COMFORT_LOW <= t <= config.COMFORT_HIGH else 0 for t in self.last_temps]
+                ax2 = ax.twinx()
+                ax2.fill_between(time_h, 0, comfort_zones, alpha=0.2, color="green", label="In Comfort Zone")
+                ax2.set_ylabel("Comfort Zone (0/1)", color="green")
+                ax2.set_ylim(-0.1, 1.1)
+                ax.set_title("Comfort Reward Details")
+                ax.set_ylabel("Comfort Reward")
+                _set_time_of_day_axis(ax)
+                ax.legend(loc="upper left", fontsize=8)
+                ax.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(os.path.join(save_dir, f"{prefix}ep_comfort_details.png"), dpi=150, bbox_inches="tight")
+                plt.close()
+
+            # ep_action_index
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            ax.scatter(time_h, self.last_actions, s=15, alpha=0.6, color="steelblue")
+            ax.set_title("Action Index over Day")
+            ax.set_ylabel("Action Index (0-23)")
+            ax.set_ylim(-1, max(self.last_actions) + 2 if self.last_actions else 24)
+            _set_time_of_day_axis(ax)
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"{prefix}ep_action_index.png"), dpi=150, bbox_inches="tight")
+            plt.close()
+
+            # ep_action_histogram
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            items = sorted(self.last_action_counts.items(), key=lambda x: x[0])
+            if items:
+                labels, counts = zip(*items)
+                ax.bar(labels, counts, color="steelblue", edgecolor="black", alpha=0.7)
+            ax.set_title("Action Usage Histogram")
+            ax.set_xlabel("Action Index")
+            ax.set_ylabel("Usage Count")
+            ax.grid(True, axis="y", alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"{prefix}ep_action_histogram.png"), dpi=150, bbox_inches="tight")
+            plt.close()
+
+            # ep_supply_setpoints
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            ax.plot(time_h, supply_seq, label="Supply Temp", linewidth=1.5, color="red")
+            ax.plot(time_h, heat_seq, label="Heat Setpoint", linewidth=1.5, color="orange")
+            ax.plot(time_h, cool_seq, label="Cool Setpoint", linewidth=1.5, color="blue")
+            ax.set_title("Supply Temperature & Setpoints")
+            ax.set_ylabel("Temperature (°C)")
+            _set_time_of_day_axis(ax)
+            ax.legend(fontsize=8)
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"{prefix}ep_supply_setpoints.png"), dpi=150, bbox_inches="tight")
+            plt.close()
+
+            # ep_fan_control
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            ax.plot(time_h, fan_seq, label="Fan u", color="tab:purple", linewidth=1.5)
+            ax.set_title("Fan Control")
+            ax.set_ylabel("Fan (0-1)")
+            ax.set_ylim(0, 1.05)
+            _set_time_of_day_axis(ax)
+            ax.legend(fontsize=8)
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_dir, f"{prefix}ep_fan_control.png"), dpi=150, bbox_inches="tight")
+            plt.close()
+
+            # ep_energy_over_day
+            if self.last_energy_details:
+                fig, ax = plt.subplots(figsize=(6, 3.5))
+                ax.plot(time_h, self.last_energy_details, "orange", linewidth=1.5, label="Energy Cost")
+                ax.set_title("Energy Consumption over Day")
+                ax.set_ylabel("Power (kW)")
+                _set_time_of_day_axis(ax)
+                ax.legend(fontsize=8)
+                ax.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(os.path.join(save_dir, f"{prefix}ep_energy_over_day.png"), dpi=150, bbox_inches="tight")
+                plt.close()
+
+            # ep_temp_distribution
+            if self.last_temps:
+                fig, ax = plt.subplots(figsize=(6, 3.5))
+                ax.hist(self.last_temps, bins=20, color="skyblue", edgecolor="black", alpha=0.7)
+                ax.axvline(22, color="r", linestyle="--", linewidth=2, label="Target 22°C")
+                ax.axvspan(config.COMFORT_LOW, config.COMFORT_HIGH, alpha=0.2, color="green", label="Comfort Zone")
+                ax.set_title("Temperature Distribution (Episode)")
+                ax.set_xlabel("Temperature (°C)")
+                ax.set_ylabel("Frequency")
+                ax.legend(fontsize=8)
+                ax.grid(True, alpha=0.3, axis="y")
+                plt.tight_layout()
+                plt.savefig(os.path.join(save_dir, f"{prefix}ep_temp_distribution.png"), dpi=150, bbox_inches="tight")
+                plt.close()
+
+            # ep_cumulative_reward
+            if self.last_comfort_details and self.last_energy_details:
+                fig, ax = plt.subplots(figsize=(6, 3.5))
+                cum_comfort = np.cumsum(self.last_comfort_details)
+                cum_energy = np.cumsum([-e for e in self.last_energy_details])
+                ax.plot(time_h, cum_comfort, "g-", linewidth=2, label="Cumulative Comfort")
+                ax.plot(time_h, cum_energy, "orange", linewidth=2, label="Cumulative Energy (neg)")
+                ax.axhline(0, color="gray", linestyle="--", alpha=0.5)
+                ax.set_title("Cumulative Reward Components")
+                ax.set_ylabel("Cumulative Reward")
+                _set_time_of_day_axis(ax)
+                ax.legend(fontsize=8)
+                ax.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(os.path.join(save_dir, f"{prefix}ep_cumulative_reward.png"), dpi=150, bbox_inches="tight")
+                plt.close()
+
+        log(f"📊 单图已保存: {save_dir} ({prefix}*.png)")
+
     def plot_episode_curves(self, episode_label, save_dir=None):
         """单独 4×3 episode 曲线（与 DQN——BOPTEST 一致）：温度、奖励、舒适度、动作、直方图、设定值、风机、能耗、温度分布、累积奖励、统计信息。横轴为 0–24h。"""
         if not self.last_actions:

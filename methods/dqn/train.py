@@ -233,6 +233,7 @@ def train():
     env.stop()
     monitor.save_training_summary()
     monitor.plot_combined(save_path=os.path.join(plot_dir, progress_fname), episode_label="final")
+    monitor.save_individual_plots(save_dir=plot_dir, method_name="dqn")
     log("DQN 训练结束")
 
 
