@@ -152,7 +152,9 @@ def train():
     save_dir = os.path.join(config.DATA_ROOT, "rule_ogb")
     plot_dir = os.path.join(save_dir, config.PLOT_SUBDIR)
     progress_fname = "rule_ogb_progress.png"
+    os.makedirs(save_dir, exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
+    log(f"📁 数据目录: {save_dir} | 图表目录: {plot_dir}")
     env = BOPTESTEnv()
     monitor = Monitor(save_dir)
     try:
