@@ -71,7 +71,7 @@ def _draw_daily_24h_profile(ax, time_h, last_temps, last_outdoor, last_power_hea
     ax2.axhspan(config.COMFORT_LOW, config.COMFORT_HIGH, alpha=0.15, color="green", label="Comfort Zone 20-24°C")
     ax2.set_ylabel("Temperature (°C)", color="green")
     ax2.tick_params(axis="y", labelcolor="green")
-    ax2.set_ylim(0, 40)
+    ax2.set_ylim(_temp_ylim_from_data(last_temps[:n], last_outdoor[:n]))
     ax2.legend(loc="upper right", fontsize=7)
     ax.legend(loc="upper left", fontsize=7)
     _set_time_of_day_axis(ax)
@@ -91,6 +91,18 @@ def _daily_24h_power_ylim(heat_kw, cool_kw):
     max_c = float(np.max(cool_kw)) * 1000 if len(cool_kw) else 0
     m = max(max_h, max_c, 100)
     return (-m * 1.05, m * 1.05)
+
+
+def _temp_ylim_from_data(indoor_temps, outdoor_temps, margin=2.0, extend_min=-30, extend_max=45):
+    """根据室内、室外温度数据计算纵轴范围，避免室外极低温/极高温被裁切。"""
+    all_t = list(indoor_temps or []) + list(outdoor_temps or [])
+    if not all_t:
+        return (0, 40)
+    lo = float(np.min(all_t)) - margin
+    hi = float(np.max(all_t)) + margin
+    lo = min(extend_min, lo)  # 至少延伸到 -30，冬季室外可到 -20 以下
+    hi = max(extend_max, hi)
+    return (lo, hi)
 
 
 def step_print(step1_index, info, action, reward, extra_line=None):
@@ -545,6 +557,7 @@ class Monitor:
             ax.plot(time_h, self.last_outdoor, label="Outdoor Temp", alpha=0.6, color="gray", linestyle="--")
             ax.axhspan(config.COMFORT_LOW, config.COMFORT_HIGH, alpha=0.15, color="green", label="Comfort Zone 20-24°C")
             ax.axhline(22, color="r", linestyle="--", linewidth=1.5, label="Target 22°C")
+            ax.set_ylim(_temp_ylim_from_data(self.last_temps, self.last_outdoor))
             ax.set_title(f"{ep_title} | Temperature Profile")
             ax.set_ylabel("Temperature (°C)")
             _set_time_of_day_axis(ax)
@@ -874,6 +887,7 @@ class Monitor:
             ax.plot(time_h, self.last_outdoor, label="Outdoor Temp", alpha=0.6, color="gray", linestyle="--")
             ax.axhspan(config.COMFORT_LOW, config.COMFORT_HIGH, alpha=0.15, color="green", label="Comfort Zone 20-24°C")
             ax.axhline(22, color="r", linestyle="--", linewidth=1.5, label="Target 22°C")
+            ax.set_ylim(_temp_ylim_from_data(self.last_temps, self.last_outdoor))
             ax.set_title("Temperature Profile")
             ax.set_ylabel("Temperature (°C)")
             _set_time_of_day_axis(ax)

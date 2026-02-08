@@ -6,6 +6,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
+import shutil
 import requests
 import numpy as np
 from collections import Counter
@@ -181,7 +182,12 @@ def train():
             monitor.eval_rewards.append(avg_eval)
             print(f"  🔍 Eval avg reward: {avg_eval:.2f}（贪心+固定4日）| 训练回报含探索+随机起始日", flush=True)
             base = progress_fname.replace(".png", "")
-            monitor.plot_combined(save_path=os.path.join(plot_dir, f"{base}_ep{episode}.png"), episode_label=episode)
+            combined_path = os.path.join(plot_dir, f"{base}_ep{episode}.png")
+            monitor.plot_combined(save_path=combined_path, episode_label=episode)
+            eval_folder = os.path.join(plot_dir, f"eval_ep{episode}")
+            os.makedirs(eval_folder, exist_ok=True)
+            shutil.copy(combined_path, os.path.join(eval_folder, "progress_combined.png"))
+            monitor.save_individual_plots(save_dir=eval_folder, method_name="", episode_label=episode)
 
     env.stop()
     monitor.save_training_summary()
