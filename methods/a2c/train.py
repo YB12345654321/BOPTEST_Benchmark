@@ -34,6 +34,7 @@ ENTROPY_COEF_START = _params.ENTROPY_COEF_START
 ENTROPY_COEF_END = _params.ENTROPY_COEF_END
 ENTROPY_DECAY_STEPS = _params.ENTROPY_DECAY_STEPS
 USE_ENTROPY_DECAY = _params.USE_ENTROPY_DECAY
+ENTROPY_COEF_MIN = getattr(_params, "ENTROPY_COEF_MIN", 0.04)
 USE_LAYER_NORM = _params.USE_LAYER_NORM
 USE_DROPOUT = _params.USE_DROPOUT
 DROPOUT_P = _params.DROPOUT_P
@@ -224,6 +225,7 @@ def train():
             last_value = model(torch.FloatTensor(state).unsqueeze(0))[1].item()
         adv, returns = _compute_gae(rewards, values, dones, last_value, GAMMA, GAE_LAMBDA)
         ent_coef = ENTROPY_COEF_END + (ENTROPY_COEF_START - ENTROPY_COEF_END) * max(0, 1 - episode / ENTROPY_DECAY_STEPS) if USE_ENTROPY_DECAY else ENTROPY_COEF_START
+        ent_coef = max(ent_coef, ENTROPY_COEF_MIN)  # 防止熵过小导致策略坍缩到单一 action
         states_t = torch.FloatTensor(np.array(states))
         actions_t = torch.LongTensor(actions)
         log_probs_old = torch.FloatTensor(log_probs)
@@ -264,7 +266,11 @@ def train():
         print(f"   舒适区时间比例: {comfort_ratio*100:.1f}%", flush=True)
         print(f"   总能耗: {total_energy:.2f} kW", flush=True)
         print(f"   Loss: {loss.item():.4f} | Entropy: {np.mean(entropies):.4f}", flush=True)
-        print(f"   使用了 {len(Counter(actions))} 种不同动作", flush=True)
+        cnt = Counter(actions)
+        n_uniq = len(cnt)
+        most_action, most_count = cnt.most_common(1)[0] if cnt else (0, 0)
+        most_pct = 100.0 * most_count / len(actions) if actions else 0
+        print(f"   动作多样性: {n_uniq} 种 | 最多: action {most_action} 占 {most_pct:.0f}%", flush=True)
 
         if episode % config.EVAL_FREQUENCY == 0:
             eval_rewards = []
@@ -285,7 +291,8 @@ def train():
             monitor.eval_episodes.append(episode)
             monitor.eval_rewards.append(avg_eval)
             print(f"  🔍 Eval avg reward: {avg_eval:.2f}", flush=True)
-            monitor.plot_combined(save_path=os.path.join(plot_dir, progress_fname), episode_label=episode)
+            base = progress_fname.replace(".png", "")
+            monitor.plot_combined(save_path=os.path.join(plot_dir, f"{base}_ep{episode}.png"), episode_label=episode)
 
     env.stop()
     monitor.save_training_summary()

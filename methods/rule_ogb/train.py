@@ -314,7 +314,8 @@ def train():
             monitor.eval_episodes.append(episode)
             monitor.eval_rewards.append(avg_eval)
             print(f"  🔍 Eval avg reward: {avg_eval:.2f}", flush=True)
-            monitor.plot_combined(save_path=os.path.join(plot_dir, progress_fname), episode_label=episode)
+            base = progress_fname.replace(".png", "")
+            monitor.plot_combined(save_path=os.path.join(plot_dir, f"{base}_ep{episode}.png"), episode_label=episode)
 
     env.stop()
     monitor.save_training_summary()
